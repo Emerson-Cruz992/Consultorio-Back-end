@@ -3,6 +3,14 @@
 ## Histórico de Versões
 
 
+### Versão 1.1 - Emerson-Cruz992 - 19/08/2025 20:32
+
+Atualização no código
+
+_Commit: 6e20de7_
+
+
+
 ### Versão 1.1 - icaroavb - 19/08/2025 20:17
 
 Melhorias no tratamento de erros e na segurança da API Gemini.  Inclui escape de caracteres especiais na string de prompt e logging aprimorado para facilitar o debug.
