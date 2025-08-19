@@ -219,38 +219,47 @@ jobs:
             echo "" >> README.md
             CURRENT_VERSION="1.0.0"
           else
-            # Extract last version from README.md
-            LAST_VERSION=$(grep -oP 'Versão \K[0-9]+\.[0-9]+(\.[0-9]+)?' README.md | tail -1 || echo "0.0.0")
+            # Check if this commit already has a version (re-run scenario)
+            CURRENT_SHA="${{ steps.commit_info.outputs.commit_sha }}"
+            EXISTING_VERSION=$(grep -B2 "Commit: ${CURRENT_SHA:0:7}" README.md | grep -oP 'Versão \K[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || echo "")
             
-            if [ -z "$LAST_VERSION" ]; then
-              LAST_VERSION="0.0.0"
-            fi
-            
-            # Split version components
-            MAJOR=$(echo $LAST_VERSION | cut -d. -f1)
-            MINOR=$(echo $LAST_VERSION | cut -d. -f2)
-            PATCH=$(echo $LAST_VERSION | cut -d. -f3)
-            
-            # Handle missing patch version
-            if [ -z "$PATCH" ]; then
-              PATCH="0"
-            fi
-            
-            # Calculate new version based on change type
-            CHANGE_TYPE="${{ steps.analyze_changes.outputs.change_type }}"
-            
-            if [ "$CHANGE_TYPE" = "major" ]; then
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              CURRENT_VERSION="$MAJOR.$MINOR"
-            elif [ "$CHANGE_TYPE" = "minor" ]; then
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              CURRENT_VERSION="$MAJOR.$MINOR"
+            if [ -n "$EXISTING_VERSION" ]; then
+              echo "🔄 Re-run detected: Using existing version $EXISTING_VERSION for commit ${CURRENT_SHA:0:7}"
+              CURRENT_VERSION="$EXISTING_VERSION"
             else
-              PATCH=$((PATCH + 1))
-              CURRENT_VERSION="$MAJOR.$MINOR.$PATCH"
+              # Extract last version from README.md
+              LAST_VERSION=$(grep -oP 'Versão \K[0-9]+\.[0-9]+(\.[0-9]+)?' README.md | tail -1 || echo "0.0.0")
+              
+              if [ -z "$LAST_VERSION" ]; then
+                LAST_VERSION="0.0.0"
+              fi
+              
+              # Split version components
+              MAJOR=$(echo $LAST_VERSION | cut -d. -f1)
+              MINOR=$(echo $LAST_VERSION | cut -d. -f2)
+              PATCH=$(echo $LAST_VERSION | cut -d. -f3)
+              
+              # Handle missing patch version
+              if [ -z "$PATCH" ]; then
+                PATCH="0"
+              fi
+              
+              # Calculate new version based on change type
+              CHANGE_TYPE="${{ steps.analyze_changes.outputs.change_type }}"
+              
+              if [ "$CHANGE_TYPE" = "major" ]; then
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                CURRENT_VERSION="$MAJOR.$MINOR"
+              elif [ "$CHANGE_TYPE" = "minor" ]; then
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                CURRENT_VERSION="$MAJOR.$MINOR"
+              else
+                PATCH=$((PATCH + 1))
+                CURRENT_VERSION="$MAJOR.$MINOR.$PATCH"
+              fi
             fi
           fi
           
@@ -258,17 +267,72 @@ jobs:
       
       - name: Update README.md
         run: |
-          # Create temporary file with new entry
+          # Check if this is a re-run (workflow re-execution)
+          IS_RERUN="false"
+          CURRENT_SHA="${{ steps.commit_info.outputs.commit_sha }}"
+          
+          # Check if README exists and if current commit is already documented
+          if [ -f README.md ]; then
+            # Extract the SHA from commit messages in README (if they exist)
+            # Look for pattern like "Commit: abc123..." in the changelog
+            if grep -q "Commit: ${CURRENT_SHA:0:7}" README.md; then
+              IS_RERUN="true"
+              echo "🔄 Re-run detected for commit ${CURRENT_SHA:0:7}"
+            fi
+          fi
+          
+          # Create the new entry
           cat > new_entry.tmp << EOF
           
           ### Versão ${{ steps.version.outputs.version }} - ${{ steps.commit_info.outputs.author_name }} - ${{ steps.commit_info.outputs.timestamp }}
           
           ${{ steps.analyze_changes.outputs.description }}
           
+          _Commit: ${CURRENT_SHA:0:7}_
+          
           EOF
           
-          # Check if README.md exists and has the changelog section
-          if [ -f README.md ]; then
+          if [ "$IS_RERUN" = "true" ] && [ -f README.md ]; then
+            echo "♻️ Updating existing entry for version ${{ steps.version.outputs.version }}"
+            
+            # Remove the last version entry (between the current version header and the next version header or end of file)
+            # This is more complex but handles re-runs properly
+            awk -v version="${{ steps.version.outputs.version }}" '
+              BEGIN { skip = 0; buffer = "" }
+              /^### Versão/ {
+                if ($3 == version) {
+                  skip = 1
+                  next
+                } else if (skip == 1) {
+                  skip = 0
+                  # Print the new entry before the next version
+                  while ((getline line < "new_entry.tmp") > 0) print line
+                  close("new_entry.tmp")
+                }
+              }
+              { 
+                if (skip == 0) print 
+              }
+              END {
+                if (skip == 1) {
+                  # If we were skipping until EOF, add the new entry at the end
+                  while ((getline line < "new_entry.tmp") > 0) print line
+                  close("new_entry.tmp")
+                }
+              }
+            ' README.md > README.tmp
+            
+            # If the version wasn't found (edge case), just add it normally
+            if ! grep -q "### Versão ${{ steps.version.outputs.version }}" README.tmp; then
+              rm README.tmp
+              # Insert new entry after the "Histórico de Versões" header
+              awk '/## Histórico de Versões/ {print; getline; print; while((getline line < "new_entry.tmp") > 0) print line; close("new_entry.tmp")} !/## Histórico de Versões/ || NR==1' README.md > README.tmp
+            fi
+            
+            mv README.tmp README.md
+          elif [ -f README.md ]; then
+            echo "➕ Adding new entry for version ${{ steps.version.outputs.version }}"
+            
             if grep -q "## Histórico de Versões" README.md; then
               # Insert new entry after the "Histórico de Versões" header
               awk '/## Histórico de Versões/ {print; getline; print; while((getline line < "new_entry.tmp") > 0) print line; close("new_entry.tmp")} !/## Histórico de Versões/ || NR==1' README.md > README.tmp
@@ -294,6 +358,9 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
+          # Pull latest changes to avoid conflicts
+          git pull --rebase
+          
           git add README.md
           
           # Check if there are changes to commit
@@ -301,5 +368,25 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "📝 Auto-update changelog: v${{ steps.version.outputs.version }}"
-            git push
+            
+            # Try to push with retry logic
+            RETRY_COUNT=0
+            MAX_RETRIES=3
+            
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              if git push; then
+                echo "Push successful!"
+                break
+              else
+                echo "Push failed, attempting retry $((RETRY_COUNT + 1))/$MAX_RETRIES"
+                git pull --rebase
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                sleep 2
+              fi
+            done
+            
+            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+              echo "Failed to push after $MAX_RETRIES attempts"
+              exit 1
+            fi
           fi
