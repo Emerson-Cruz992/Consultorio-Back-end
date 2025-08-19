@@ -49,6 +49,16 @@ jobs:
           
           // Gemini API configuration
           const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+          
+          // Check if API key exists
+          if (!GEMINI_API_KEY || GEMINI_API_KEY === '' || GEMINI_API_KEY === '***') {
+            console.error('WARNING: GEMINI_API_KEY is not set or is masked');
+            console.error('Make sure GEMINI_API_KEY secret is properly configured in repository settings');
+          } else {
+            console.error('API Key length:', GEMINI_API_KEY.length);
+            console.error('API Key first 10 chars:', GEMINI_API_KEY.substring(0, 10) + '...');
+          }
+          
           const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
           
           async function callGeminiAPI(prompt) {
@@ -82,19 +92,39 @@ jobs:
                 
                 res.on('end', () => {
                   try {
+                    console.error('API Response Status:', res.statusCode);
+                    console.error('API Response Headers:', JSON.stringify(res.headers));
+                    
+                    // Log first 500 chars of response for debugging
+                    console.error('API Response (first 500 chars):', responseData.substring(0, 500));
+                    
                     const response = JSON.parse(responseData);
+                    
+                    // Check for error in response
+                    if (response.error) {
+                      console.error('API Error:', JSON.stringify(response.error));
+                      reject(new Error(`Gemini API Error: ${response.error.message || 'Unknown error'}`));
+                      return;
+                    }
+                    
                     if (response.candidates && response.candidates[0]?.content?.parts?.[0]?.text) {
                       resolve(response.candidates[0].content.parts[0].text);
                     } else {
-                      reject(new Error('Invalid API response'));
+                      console.error('Unexpected API response structure:', JSON.stringify(response).substring(0, 500));
+                      reject(new Error('Invalid API response structure'));
                     }
                   } catch (error) {
+                    console.error('Failed to parse API response:', error.message);
                     reject(error);
                   }
                 });
               });
               
-              req.on('error', reject);
+              req.on('error', (error) => {
+                console.error('Request error:', error.message);
+                reject(error);
+              });
+              
               req.write(data);
               req.end();
             });
@@ -358,16 +388,25 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # Pull latest changes to avoid conflicts
-          git pull --rebase
-          
+          # Add the README changes first
           git add README.md
           
           # Check if there are changes to commit
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
+            # Commit the changes
             git commit -m "📝 Auto-update changelog: v${{ steps.version.outputs.version }}"
+            
+            # Pull and merge latest changes
+            git fetch origin main
+            git merge origin/main --no-edit || {
+              echo "Merge conflict detected, attempting to resolve..."
+              # In case of conflict, prefer our version (the newly generated changelog)
+              git checkout --ours README.md
+              git add README.md
+              git commit --no-edit || true
+            }
             
             # Try to push with retry logic
             RETRY_COUNT=0
@@ -375,18 +414,18 @@ jobs:
             
             while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
               if git push; then
-                echo "Push successful!"
+                echo "✅ Push successful!"
                 break
               else
-                echo "Push failed, attempting retry $((RETRY_COUNT + 1))/$MAX_RETRIES"
-                git pull --rebase
+                echo "⚠️ Push failed, attempting retry $((RETRY_COUNT + 1))/$MAX_RETRIES"
+                git pull --rebase=false --strategy=ours --no-edit
                 RETRY_COUNT=$((RETRY_COUNT + 1))
                 sleep 2
               fi
             done
             
             if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-              echo "Failed to push after $MAX_RETRIES attempts"
+              echo "❌ Failed to push after $MAX_RETRIES attempts"
               exit 1
             fi
           fi
