@@ -30,6 +30,7 @@ public class Pessoa {
 
     @Temporal(TemporalType.DATE)
     private Date dataNascimento;
+    private String teste;
 
     
     
