@@ -3,6 +3,14 @@
 ## Histórico de Versões
 
 
+### Versão 1.0.1 - Emerson-Cruz992 - 19/08/2025 20:34
+
+Remoção da variável 'teste'. Correção de código desnecessário.
+
+_Commit: eb4cde6_
+
+
+
 ### Versão 1.1 - Emerson-Cruz992 - 19/08/2025 20:32
 
 Atualização no código
