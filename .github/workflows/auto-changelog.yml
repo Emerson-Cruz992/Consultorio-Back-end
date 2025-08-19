@@ -61,25 +61,30 @@ jobs:
           
           const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
           
-          async function callGeminiAPI(prompt) {
+          async function callGeminiAPI(escapedPrompt) {
             return new Promise((resolve, reject) => {
-              const data = JSON.stringify({
+              const payload = {
                 contents: [{
                   parts: [{
-                    text: prompt
+                    text: escapedPrompt
                   }]
                 }],
                 generationConfig: {
                   temperature: 0.4,
                   maxOutputTokens: 500
                 }
-              });
+              };
+              
+              const data = JSON.stringify(payload);
+              
+              // Debug: log the request payload
+              console.error('Request payload (first 1000 chars):', data.substring(0, 1000));
               
               const options = {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'Content-Length': data.length
+                  'Content-Length': Buffer.byteLength(data)
                 }
               };
               
@@ -93,10 +98,6 @@ jobs:
                 res.on('end', () => {
                   try {
                     console.error('API Response Status:', res.statusCode);
-                    console.error('API Response Headers:', JSON.stringify(res.headers));
-                    
-                    // Log first 500 chars of response for debugging
-                    console.error('API Response (first 500 chars):', responseData.substring(0, 500));
                     
                     const response = JSON.parse(responseData);
                     
@@ -108,9 +109,10 @@ jobs:
                     }
                     
                     if (response.candidates && response.candidates[0]?.content?.parts?.[0]?.text) {
+                      console.error('API returned valid response');
                       resolve(response.candidates[0].content.parts[0].text);
                     } else {
-                      console.error('Unexpected API response structure:', JSON.stringify(response).substring(0, 500));
+                      console.error('Unexpected API response structure');
                       reject(new Error('Invalid API response structure'));
                     }
                   } catch (error) {
@@ -177,13 +179,19 @@ jobs:
           ${diff}
 
           Diff detalhado:
-          \`\`\`
           ${truncatedDiff}
-          \`\`\`
 
           Responda APENAS com o JSON, sem explicações adicionais.`;
               
-              const response = await callGeminiAPI(prompt);
+              // Properly escape the prompt for JSON
+              const escapedPrompt = prompt
+                .replace(/\\/g, '\\\\')
+                .replace(/"/g, '\\"')
+                .replace(/\n/g, '\\n')
+                .replace(/\r/g, '\\r')
+                .replace(/\t/g, '\\t');
+              
+              const response = await callGeminiAPI(escapedPrompt);
               
               // Parse response
               try {
